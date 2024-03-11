@@ -4,43 +4,25 @@ import jax.numpy as jnp
 
 class GradientAscent:
     """
-    Custom gradient ascent solver (optimizer) for JAX/Flax models.
+    Custom gradient ascent optimizer for JAX/Flax models, featuring momentum and Nesterov momentum options,
+    gradient clipping, learning rate decay, and warmup functionality.
 
-    Args:
+    Attr:
+        parameters (dict): A dictionary of model parameters to be optimized
+        lr (float): Initial learning rate for the optimizer. Default is 0.01
+        momentum (float): Momentum factor to accelerate optimization in the direction of consistent gradient. Default is 0.9
+        clip_value (float, optional): The maximum gradient norm if gradient clipping is applied. None means no clipping
+        lr_decay (float): Learning rate decay factor applied each decay step. Default is 1.0 (no decay)
+        warmup_steps (int): Number of steps to linearly scale the learning rate from 0 to the initial learning rate. Default is 0 (no warmup)
+        logging_interval (int): Interval in steps between logging of optimization information. Default is 10
+        nesterov (bool): If True, uses Nesterov momentum instead of standard momentum. Default is False
+        decay_step (int): Number of steps between each decay of the learning rate. Default is 10
+        decay_rate (float): Factor by which the learning rate decays at each decay step. Default is 0.9
 
-    parameters: flax.linen.Module
-        Model parameters to be updated
-
-    lr: float
-        Learning rate
-
-    momentum: float
-        Momentum factor
-
-    beta: float
-        Exponential decay rate for the second moment estimates
-
-    eps: float
-        Small constant to avoid division by zero
-
-    nesterov: bool
-        Whether to use Nesterov momentum
-
-    clip_value: float
-        Maximum allowed value for the gradients
-
-    lr_decay: float
-        Learning rate decay factor
-
-    warmup_steps: int
-        Number of warmup steps
-
-    logging_interval: int
-        Logging interval
-
-    Usage:
-        grad_ascent_solver = GradientAscent(parameters=model_params, lr=0.01, momentum=0.9, beta=0.999, eps=1e-8)
-
+    Methods:
+        clip_grads(grads): Clips the gradients to a maximum norm specified by clip_value
+        step(grads): Performs a single optimization step using the provided gradients
+        adjust_learning_rate(): Adjusts the learning rate based on the current step count, applying warmup and decay
     """
 
     def __init__(
@@ -48,57 +30,78 @@ class GradientAscent:
         parameters,
         lr=0.01,
         momentum=0.9,
-        beta=0.999,
-        eps=1e-8,
-        nesterov=False,
         clip_value=None,
-        lr_decay=None,
+        lr_decay=1.0,
         warmup_steps=0,
         logging_interval=10,
+        nesterov=False,
+        decay_step=10,
+        decay_rate=0.9,
     ):
+        """
+        Init the optimizer class with the provided parameters and configuration
+        """
         self.parameters = parameters
         self.lr = lr
         self.momentum = momentum
-        self.beta = beta
-        self.eps = eps
-        self.nesterov = nesterov
         self.clip_value = clip_value
         self.lr_decay = lr_decay
         self.warmup_steps = warmup_steps
         self.logging_interval = logging_interval
-
+        self.nesterov = nesterov
         self.step_count = 0
-        self.v = jax.tree_map(lambda p: jnp.zeros_like(p), parameters)
-        self.m = jax.tree_map(lambda p: jnp.zeros_like(p), parameters)
 
-    def step(self):
+        self.decay_step = decay_step
+        self.decay_rate = decay_rate
+        self.v = jax.tree_map(jnp.zeros_like, parameters)
+
+    def clip_grads(self, grads):
+        """
+        Clips gradients to a maximum norm
+        """
+        if self.clip_value is None:
+            return grads
+
+        norm = jnp.sqrt(sum([jnp.sum(jnp.square(g)) for g in jax.tree_leaves(grads)]))
+        clip_coef = jnp.minimum(1, self.clip_value / (norm + 1e-6))
+        return jax.tree_map(lambda g: g * clip_coef, grads)
+
+    def step(self, grads):
+        """
+        Single optimization step using the provided gradients
+        """
         self.step_count += 1
-        for param, grad in zip(self.parameters, jax.tree_leaves(self.parameters)):
-            if grad is not None:
-                if self.clip_value:
-                    grad = jnp.clip(grad, -self.clip_value, self.clip_value)
+        grads = self.clip_grads(grads)
 
-                if self.nesterov:
-                    grad = grad + self.momentum * self.v[param]
-                else:
-                    grad = grad
+        lr = self.adjust_learning_rate()
 
-                self.v[param] = self.momentum * self.v[param] + grad
+        def update_param(param, grad, v):
+            if self.nesterov:
+                v_prev = v
+                v = self.momentum * v + grad
+                update = lr * ((1 + self.momentum) * v - self.momentum * v_prev)
+            else:
+                v = self.momentum * v + grad
+                update = lr * v
 
-                self.m[param] = self.beta * self.m[param] + (1 - self.beta) * grad**2
-                adapted_lr = self.lr / (jnp.sqrt(self.m[param]) + self.eps)
+            return param + update, v
 
-                if self.lr_decay:
-                    adapted_lr *= self.lr_decay
+        updated_params_and_v = jax.tree_map(
+            update_param, self.parameters, grads, self.v, is_leaf=lambda x: isinstance(x, tuple)
+        )
 
-                self.parameters = jax.tree_multimap(
-                    lambda p, v: p - adapted_lr * v, self.parameters, self.v
-                )
+        for key in self.parameters:
+            self.parameters[key], self.v[key] = updated_params_and_v[key]
 
         if self.step_count % self.logging_interval == 0:
-            updated_param_norm = jnp.linalg.norm(
-                jax.tree_multimap(lambda p, v: p - adapted_lr * v, self.parameters, self.v)
-            )
-            print(
-                f"Step: {self.step_count}, Learning Rate: {self.lr}, Parameter Norm: {updated_param_norm}"
-            )
+            print(f"Step: {self.step_count}, Learning Rate: {lr}")
+
+        return self.parameters
+
+    def adjust_learning_rate(self):
+        if self.step_count <= self.warmup_steps:
+            lr = self.lr * (self.step_count / self.warmup_steps)
+        else:
+            decay_factor = self.decay_rate ** (self.step_count // self.decay_step)
+            lr = self.lr * decay_factor
+        return lr

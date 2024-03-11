@@ -1,19 +1,25 @@
 import jax
 import jax.numpy as jnp
-
-from flax import linen as nn
 from gradient_ascent_jax.gradient_ascent import GradientAscent
 
-class Model(nn.Module):
-    @nn.compact
-    def __call__(self, x):
-        return nn.Dense(name="fc", features=1)(x)
+
+def f(x):
+    return -(x**2)
 
 
-# Initialize model and optimizer
-rng = jax.random.PRNGKey(0)
-key, subkey = jax.random.split(rng)
-params = Model().init(subkey, jnp.ones((1, 1)))
+def grad_f(x):
+    return -2 * x
 
-# Use custom GA optimizer
-solver = GradientAscent(parameters=params, lr=0.01, momentum=0.9, beta=0.999, eps=1e-8)
+
+x_init = jnp.array(10.0)
+parameters = {"x": x_init}
+
+solver = GradientAscent(
+    parameters=parameters, lr=0.1, momentum=0.9, warmup_steps=0, logging_interval=1
+)
+
+for step in range(50):
+    grads = {"x": grad_f(solver.parameters["x"])}
+    parameters = solver.step(grads)
+    if step % 10 == 0:
+        print(f"Step {step}, x: {parameters['x']}")

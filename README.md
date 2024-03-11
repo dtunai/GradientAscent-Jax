@@ -1,18 +1,24 @@
 # Gradient Ascent Jax
 
-This repository provides a custom implementation of the Gradient Ascent solver with momentum and adaptive learning rates for JAX and Flax models.
+This repository provides a custom packaged implementation of the Gradient Ascent solver with advanced momentum and adaptive LR features for JAX and Flax models.
 
 **Optimizer Built-In Features:**
 
-- Gradient Ascent optimization algorithm
-- Momentum for smoother convergence
-- Adaptive learning rate based on parameter gradients
-- Optional gradient clipping to prevent exploding gradients
-- Support for learning rate decay
-- Logging of learning rate and parameter norm during training
-
+- Gradient Ascent optimization strategy, tailored for maximizing objective functions.
+- Momentum to facilitate smoother and more stable convergence by incorporating previous gradient steps.
+- Adaptive LR mechanism that adjusts according to the magnitude of parameter gradients, promoting efficient progress towards the optimization peak.
+- Optional clipping, a crucial safeguard against the detrimental effects of exploding gradients, thereby ensuring stable training dynamics.
+- LR Decay, a methodical reduction of the learning rate over time, which helps fine-tune the model's performance as it approaches the optimal solution.
+- Logging functionalities, capturing and reporting the evolution of the learning rate and the norm of parameters throughout the training process.
 
 ## **Installation**
+
+**Requirements**
+
+```bash
+jax==0.4.25
+jaxlib==0.4.25
+```
 
 You can install the package using `pip3 install -e .`:
 
@@ -29,19 +35,27 @@ You can easily initialize the solver as follows:
 ```python
 import jax
 import jax.numpy as jnp
+from gradient_ascent_jax.gradient_ascent import GradientAscent
 
 
-class Model(nn.Module):
-    @nn.compact
-    def __call__(self, x):
-        return nn.Dense(name="fc", features=1)(x)
+def f(x):
+    return -(x**2)
 
 
-# Initialize model and optimizer
-rng = jax.random.PRNGKey(0)
-key, subkey = jax.random.split(rng)
-params = Model().init(subkey, jnp.ones((1, 1)))
+def grad_f(x):
+    return -2 * x
 
-# Use custom GA optimizer
-solver = GradientAscent(parameters=params, lr=0.01, momentum=0.9, beta=0.999, eps=1e-8)
+
+x_init = jnp.array(10.0)
+parameters = {"x": x_init}
+
+solver = GradientAscent(
+    parameters=parameters, lr=0.1, momentum=0.9, warmup_steps=0, logging_interval=1
+)
+
+for step in range(50):
+    grads = {"x": grad_f(solver.parameters["x"])}
+    parameters = solver.step(grads)
+    if step % 10 == 0:
+        print(f"Step {step}, x: {parameters['x']}")
 ```
