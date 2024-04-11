@@ -23,7 +23,7 @@ jaxlib==0.4.25
 You can install the package using `pip3 install -e .`:
 
 ```bash
-git clone https://github.com/attophyd/GradientAscent-Jax
+git clone https://github.com/simudt/GradientAscent-Jax
 cd GradientAscent-Jax
 pip3 install -e .
 ```
